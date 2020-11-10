@@ -44,13 +44,11 @@ namespace util
   MPI_Comm
   get_mpi_comm(const MeshType &mesh)
   {
-    const auto *tria_parallel = dynamic_cast<
-      const parallel::TriangulationBase<MeshType::dimension,
-                                        MeshType::space_dimension> *>(
-      &(mesh.get_triangulation()));
+    const auto *tria_parallel =
+      dynamic_cast<const parallel::TriangulationBase<MeshType::dimension, MeshType::space_dimension> *>(
+        &(mesh.get_triangulation()));
 
-    return tria_parallel != nullptr ? tria_parallel->get_communicator() :
-                                      MPI_COMM_SELF;
+    return tria_parallel != nullptr ? tria_parallel->get_communicator() : MPI_COMM_SELF;
   }
 
   /**
@@ -58,26 +56,21 @@ namespace util
    */
   template <int dim, int spacedim>
   std::shared_ptr<const Utilities::MPI::Partitioner>
-  create_dealii_partitioner(
-    const DoFHandler<dim, spacedim> &dof_handler,
-    unsigned int                     mg_level = numbers::invalid_unsigned_int)
+  create_dealii_partitioner(const DoFHandler<dim, spacedim> &dof_handler,
+                            unsigned int                     mg_level = numbers::invalid_unsigned_int)
   {
     IndexSet locally_relevant_dofs;
 
     if (mg_level == numbers::invalid_unsigned_int)
-      DoFTools::extract_locally_relevant_dofs(dof_handler,
-                                              locally_relevant_dofs);
+      DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
     else
-      DoFTools::extract_locally_relevant_level_dofs(dof_handler,
-                                                    mg_level,
-                                                    locally_relevant_dofs);
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler, mg_level, locally_relevant_dofs);
 
-    return std::make_shared<const Utilities::MPI::Partitioner>(
-      mg_level == numbers::invalid_unsigned_int ?
-        dof_handler.locally_owned_dofs() :
-        dof_handler.locally_owned_mg_dofs(mg_level),
-      locally_relevant_dofs,
-      get_mpi_comm(dof_handler));
+    return std::make_shared<const Utilities::MPI::Partitioner>(mg_level == numbers::invalid_unsigned_int ?
+                                                                 dof_handler.locally_owned_dofs() :
+                                                                 dof_handler.locally_owned_mg_dofs(mg_level),
+                                                               locally_relevant_dofs,
+                                                               get_mpi_comm(dof_handler));
   }
 
   /**
@@ -85,8 +78,7 @@ namespace util
    */
   template <int dim, typename Number>
   void
-  initialize_dof_vector(const DoFHandler<dim> &                     dof_handler,
-                        LinearAlgebra::distributed::Vector<Number> &vec)
+  initialize_dof_vector(const DoFHandler<dim> &dof_handler, LinearAlgebra::distributed::Vector<Number> &vec)
   {
     const auto partitioner_dealii = create_dealii_partitioner(dof_handler);
     vec.reinit(partitioner_dealii);
@@ -101,8 +93,7 @@ namespace util
                            const AffineConstraints<double> &constraints,
                            TrilinosWrappers::SparseMatrix & system_matrix)
   {
-    TrilinosWrappers::SparsityPattern dsp(dof_handler.locally_owned_dofs(),
-                                          get_mpi_comm(dof_handler));
+    TrilinosWrappers::SparsityPattern dsp(dof_handler.locally_owned_dofs(), get_mpi_comm(dof_handler));
     DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
     dsp.compress();
 
@@ -122,8 +113,7 @@ namespace util
       for (unsigned int j = 0; j < dim; ++j)
         for (unsigned int k = 0; k < dim; ++k)
           for (unsigned int l = 0; l < dim; ++l)
-            tmp[i][j][k][l] = (((i == k) && (j == l) ? mu : 0.0) +
-                               ((i == l) && (j == k) ? mu : 0.0) +
+            tmp[i][j][k][l] = (((i == k) && (j == l) ? mu : 0.0) + ((i == l) && (j == k) ? mu : 0.0) +
                                ((i == j) && (k == l) ? lambda : 0.0));
     return tmp;
   }
@@ -134,9 +124,7 @@ namespace util
    */
   template <int dim>
   inline SymmetricTensor<2, dim>
-  get_strain(const FEValues<dim> &fe_values,
-             const unsigned int   shape_func,
-             const unsigned int   q_point)
+  get_strain(const FEValues<dim> &fe_values, const unsigned int shape_func, const unsigned int q_point)
   {
     SymmetricTensor<2, dim> tmp;
 
@@ -145,10 +133,9 @@ namespace util
 
     for (unsigned int i = 0; i < dim; ++i)
       for (unsigned int j = i + 1; j < dim; ++j)
-        tmp[i][j] =
-          (fe_values.shape_grad_component(shape_func, q_point, i)[j] +
-           fe_values.shape_grad_component(shape_func, q_point, j)[i]) /
-          2;
+        tmp[i][j] = (fe_values.shape_grad_component(shape_func, q_point, i)[j] +
+                     fe_values.shape_grad_component(shape_func, q_point, j)[i]) /
+                    2;
 
     return tmp;
   }
@@ -168,8 +155,7 @@ main(int argc, char **argv)
 
   // create mesh, select relevant FEM ingredients, and set up DoFHandler
   parallel::distributed::Triangulation<dim> tria(MPI_COMM_WORLD);
-  GridGenerator::subdivided_hyper_rectangle(
-    tria, {10, 2}, Point<dim>(0, 0), Point<dim>(1, 0.2), true);
+  GridGenerator::subdivided_hyper_rectangle(tria, {10, 2}, Point<dim>(0, 0), Point<dim>(1, 0.2), true);
   tria.refine_global(n_refinements);
 
   FESystem<dim>        fe(FE_Q<dim>(degree), dim);
@@ -185,19 +171,17 @@ main(int argc, char **argv)
 
   // ... fill constraint matrix
   {
-    VectorTools::interpolate_boundary_values(
-      dof_handler,
-      0, // left face
-      Functions::ConstantFunction<dim>(std::vector<double>{0.0, 0.0}),
-      constraints,
-      ComponentMask(std::vector<bool>{true, false}));
+    VectorTools::interpolate_boundary_values(dof_handler,
+                                             0, // left face
+                                             Functions::ConstantFunction<dim>(std::vector<double>{0.0, 0.0}),
+                                             constraints,
+                                             ComponentMask(std::vector<bool>{true, false}));
 
-    VectorTools::interpolate_boundary_values(
-      dof_handler,
-      2, // bottom face
-      Functions::ConstantFunction<dim>(std::vector<double>{0.0, 0.0}),
-      constraints,
-      ComponentMask(std::vector<bool>{false, true}));
+    VectorTools::interpolate_boundary_values(dof_handler,
+                                             2, // bottom face
+                                             Functions::ConstantFunction<dim>(std::vector<double>{0.0, 0.0}),
+                                             constraints,
+                                             ComponentMask(std::vector<bool>{false, true}));
   }
 
   // ... finalize constraint matrix
@@ -214,23 +198,16 @@ main(int argc, char **argv)
 
   // assemble right-hand side and system matrix
   {
-    FEValues<dim> fe_values(mapping,
-                            fe,
-                            quad,
-                            update_gradients | update_JxW_values);
+    FEValues<dim> fe_values(mapping, fe, quad, update_gradients | update_JxW_values);
 
-    FEFaceValues<dim> fe_face_values(mapping,
-                                     fe,
-                                     face_quad,
-                                     update_values | update_JxW_values);
+    FEFaceValues<dim> fe_face_values(mapping, fe, face_quad, update_values | update_JxW_values);
 
 
     FullMatrix<double>                   cell_matrix;
     Vector<double>                       cell_rhs;
     std::vector<types::global_dof_index> local_dof_indices;
 
-    const auto stress_strain_tensor =
-      util::get_stress_strain_tensor<dim>(9.695e10, 7.617e10);
+    const auto stress_strain_tensor = util::get_stress_strain_tensor<dim>(9.695e10, 7.617e10);
 
     // loop over all cells
     for (const auto &cell : dof_handler.active_cell_iterators())
@@ -249,9 +226,8 @@ main(int argc, char **argv)
           for (unsigned int j = 0; j < dofs_per_cell; ++j)
             for (unsigned int q = 0; q < fe_values.n_quadrature_points; ++q)
               {
-                const SymmetricTensor<2, dim>
-                  eps_phi_i = util::get_strain(fe_values, i, q),
-                  eps_phi_j = util::get_strain(fe_values, j, q);
+                const SymmetricTensor<2, dim> eps_phi_i = util::get_strain(fe_values, i, q),
+                                              eps_phi_j = util::get_strain(fe_values, j, q);
 
                 cell_matrix(i, j) += (eps_phi_i *            //
                                       stress_strain_tensor * //
@@ -261,17 +237,14 @@ main(int argc, char **argv)
               }
 
         // loop over all cell faces and their dofs
-        for (unsigned int face = 0; face < GeometryInfo<dim>::faces_per_cell;
-             ++face)
+        for (unsigned int face = 0; face < GeometryInfo<dim>::faces_per_cell; ++face)
           {
-            if (!cell->at_boundary(face) ||
-                cell->face(face)->boundary_id() != 1) // we only want to apply
-              continue;                               // NBC on the right face
+            if (!cell->at_boundary(face) || cell->face(face)->boundary_id() != 1) // we only want to apply
+              continue;                                                           // NBC on the right face
 
             fe_face_values.reinit(cell, face);
 
-            for (unsigned int q = 0; q < fe_face_values.n_quadrature_points;
-                 ++q)
+            for (unsigned int q = 0; q < fe_face_values.n_quadrature_points; ++q)
               for (unsigned int i = 0; i < dofs_per_cell; ++i)
                 if (fe.system_to_component_index(i).first == 0)
                   cell_rhs(i) += fe_face_values.shape_value(i, q) * 1e9;
@@ -281,8 +254,7 @@ main(int argc, char **argv)
         local_dof_indices.resize(cell->get_fe().dofs_per_cell);
         cell->get_dof_indices(local_dof_indices);
 
-        constraints.distribute_local_to_global(
-          cell_matrix, cell_rhs, local_dof_indices, A, b);
+        constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices, A, b);
       }
 
     b.compress(VectorOperation::values::add);
@@ -292,8 +264,7 @@ main(int argc, char **argv)
   // solve linear equation system
   {
     ReductionControl                                     reduction_control;
-    SolverCG<LinearAlgebra::distributed::Vector<double>> solver(
-      reduction_control);
+    SolverCG<LinearAlgebra::distributed::Vector<double>> solver(reduction_control);
     solver.solve(A, x, b, PreconditionIdentity());
 
     if (Utilities::MPI::this_mpi_process(util::get_mpi_comm(tria)) == 0)
@@ -307,16 +278,12 @@ main(int argc, char **argv)
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
     x.update_ghost_values();
-    data_out.add_data_vector(
-      dof_handler,
-      x,
-      "solution",
-      std::vector<DataComponentInterpretation::DataComponentInterpretation>(
-        dim, DataComponentInterpretation::component_is_part_of_vector));
+    data_out.add_data_vector(dof_handler,
+                             x,
+                             "solution",
+                             std::vector<DataComponentInterpretation::DataComponentInterpretation>(
+                               dim, DataComponentInterpretation::component_is_part_of_vector));
     data_out.build_patches(mapping, n_patches);
-    data_out.write_vtu_with_pvtu_record("./",
-                                        "result",
-                                        0,
-                                        util::get_mpi_comm(tria));
+    data_out.write_vtu_with_pvtu_record("./", "result", 0, util::get_mpi_comm(tria));
   }
 }
