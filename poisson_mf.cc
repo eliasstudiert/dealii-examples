@@ -19,7 +19,6 @@
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_q.h>
-#include <deal.II/fe/fe_system.h>
 
 #include <deal.II/grid/grid_generator.h>
 
@@ -27,8 +26,9 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_control.h>
-#include <deal.II/lac/trilinos_sparse_matrix.h>
-#include <deal.II/lac/trilinos_sparsity_pattern.h>
+
+#include <deal.II/matrix_free/fe_evaluation.h>
+#include <deal.II/matrix_free/matrix_free.h>
 
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
@@ -49,55 +49,6 @@ namespace util
         &(mesh.get_triangulation()));
 
     return tria_parallel != nullptr ? tria_parallel->get_communicator() : MPI_COMM_SELF;
-  }
-
-  /**
-   * Create a deal.II partitioner.
-   */
-  template <int dim, int spacedim>
-  std::shared_ptr<const Utilities::MPI::Partitioner>
-  create_dealii_partitioner(const DoFHandler<dim, spacedim> &dof_handler,
-                            unsigned int                     mg_level = numbers::invalid_unsigned_int)
-  {
-    IndexSet locally_relevant_dofs;
-
-    if (mg_level == numbers::invalid_unsigned_int)
-      DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-    else
-      DoFTools::extract_locally_relevant_level_dofs(dof_handler, mg_level, locally_relevant_dofs);
-
-    return std::make_shared<const Utilities::MPI::Partitioner>(mg_level == numbers::invalid_unsigned_int ?
-                                                                 dof_handler.locally_owned_dofs() :
-                                                                 dof_handler.locally_owned_mg_dofs(mg_level),
-                                                               locally_relevant_dofs,
-                                                               get_mpi_comm(dof_handler));
-  }
-
-  /**
-   * Initialize dof vector @p vec.
-   */
-  template <int dim, typename Number>
-  void
-  initialize_dof_vector(const DoFHandler<dim> &dof_handler, LinearAlgebra::distributed::Vector<Number> &vec)
-  {
-    const auto partitioner_dealii = create_dealii_partitioner(dof_handler);
-    vec.reinit(partitioner_dealii);
-  }
-
-  /**
-   * Initialize dof vector @p vec.
-   */
-  template <int dim>
-  void
-  initialize_system_matrix(const DoFHandler<dim> &          dof_handler,
-                           const AffineConstraints<double> &constraints,
-                           TrilinosWrappers::SparseMatrix & system_matrix)
-  {
-    TrilinosWrappers::SparsityPattern dsp(dof_handler.locally_owned_dofs(), get_mpi_comm(dof_handler));
-    DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
-    dsp.compress();
-
-    system_matrix.reinit(dsp);
   }
 
   template <int dim, int spacedim>
@@ -124,6 +75,72 @@ namespace util
 } // namespace util
 
 
+template <int dim>
+class PoissonOperator
+{
+public:
+  using VectorType = LinearAlgebra::distributed::Vector<double>;
+
+  PoissonOperator(const MatrixFree<dim, double> &matrix_free)
+    : matrix_free(matrix_free)
+  {}
+
+  void
+  initialize_dof_vector(VectorType &vec)
+  {
+    matrix_free.initialize_dof_vector(vec);
+  }
+
+  void
+  rhs(VectorType &vec) const
+  {
+    const int dummy = 0;
+
+    matrix_free.template cell_loop<VectorType, int>(
+      [&](const auto &, auto &dst, const auto &, const auto cells) {
+        FEEvaluation<dim, -1, 0, 1, double> phi(matrix_free);
+        for (unsigned int cell = cells.first; cell < cells.second; ++cell)
+          {
+            phi.reinit(cell);
+            for (unsigned int q = 0; q < phi.dofs_per_cell; ++q)
+              phi.submit_value(1.0, q);
+
+            phi.integrate_scatter(true, false, dst);
+          }
+      },
+      vec,
+      dummy,
+      true);
+  }
+
+
+  void
+  vmult(VectorType &dst, const VectorType &src) const
+  {
+    matrix_free.template cell_loop<VectorType, VectorType>(
+      [&](const auto &, auto &dst, const auto &src, const auto cells) {
+        FEEvaluation<dim, -1, 0, 1, double> phi(matrix_free);
+        for (unsigned int cell = cells.first; cell < cells.second; ++cell)
+          {
+            phi.reinit(cell);
+            phi.gather_evaluate(src, false, true);
+
+            for (unsigned int q = 0; q < phi.dofs_per_cell; ++q)
+              phi.submit_gradient(phi.get_gradient(q), q);
+
+            phi.integrate_scatter(false, true, dst);
+          }
+      },
+      dst,
+      src,
+      true);
+  }
+
+private:
+  const MatrixFree<dim, double> &matrix_free;
+};
+
+
 int
 main(int argc, char **argv)
 {
@@ -137,7 +154,7 @@ main(int argc, char **argv)
   util::create_reentrant_corner(tria);
 
   FE_Q<dim>            fe(degree);
-  QGauss<dim>          quad(degree + 1);
+  QGauss<1>            quad(degree + 1);
   MappingQGeneric<dim> mapping(1);
 
   DoFHandler<dim> dof_handler(tria);
@@ -149,60 +166,27 @@ main(int argc, char **argv)
     mapping, dof_handler, 0, Functions::ZeroFunction<dim>(), constraints);
   constraints.close();
 
-  // initialize vectors and system matrix
+  // initialize MatrixFree
+  typename MatrixFree<dim, double>::AdditionalData additional_data;
+  additional_data.mapping_update_flags = update_gradients | update_values;
+
+  MatrixFree<dim, double> matrix_free;
+  matrix_free.reinit(mapping, dof_handler, constraints, quad, additional_data);
+
+  // create operator
+  PoissonOperator<dim> poisson_operator(matrix_free);
+
+  // initialize vectors
   LinearAlgebra::distributed::Vector<double> x, b;
-  TrilinosWrappers::SparseMatrix             A;
-  util::initialize_dof_vector(dof_handler, x);
-  util::initialize_dof_vector(dof_handler, b);
-  util::initialize_system_matrix(dof_handler, constraints, A);
+  poisson_operator.initialize_dof_vector(x);
+  poisson_operator.initialize_dof_vector(b);
 
-  // assemble right-hand side and system matrix
-  FEValues<dim> fe_values(mapping, fe, quad, update_values | update_gradients | update_JxW_values);
-
-  FullMatrix<double>                   cell_matrix;
-  Vector<double>                       cell_rhs;
-  std::vector<types::global_dof_index> local_dof_indices;
-
-  // loop over all cells
-  for (const auto &cell : dof_handler.active_cell_iterators())
-    {
-      if (cell->is_locally_owned() == false)
-        continue;
-
-      fe_values.reinit(cell);
-
-      const unsigned int dofs_per_cell = cell->get_fe().dofs_per_cell;
-      cell_matrix.reinit(dofs_per_cell, dofs_per_cell);
-      cell_rhs.reinit(dofs_per_cell);
-
-      // loop over cell dofs
-      for (const auto q : fe_values.quadrature_point_indices())
-        {
-          for (const auto i : fe_values.dof_indices())
-            for (const auto j : fe_values.dof_indices())
-              cell_matrix(i, j) += (fe_values.shape_grad(i, q) * // grad phi_i(x_q)
-                                    fe_values.shape_grad(j, q) * // grad phi_j(x_q)
-                                    fe_values.JxW(q));           // dx
-
-          for (const unsigned int i : fe_values.dof_indices())
-            cell_rhs(i) += (fe_values.shape_value(i, q) * // phi_i(x_q)
-                            1. *                          // f(x_q)
-                            fe_values.JxW(q));            // dx
-        }
-
-      local_dof_indices.resize(cell->get_fe().dofs_per_cell);
-      cell->get_dof_indices(local_dof_indices);
-
-      constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices, A, b);
-    }
-
-  b.compress(VectorOperation::values::add);
-  A.compress(VectorOperation::values::add);
+  poisson_operator.rhs(b);
 
   // solve linear equation system
   ReductionControl                                     reduction_control;
   SolverCG<LinearAlgebra::distributed::Vector<double>> solver(reduction_control);
-  solver.solve(A, x, b, PreconditionIdentity());
+  solver.solve(poisson_operator, x, b, PreconditionIdentity());
 
   if (Utilities::MPI::this_mpi_process(util::get_mpi_comm(tria)) == 0)
     printf("Solved in %d iterations.\n", reduction_control.last_step());
