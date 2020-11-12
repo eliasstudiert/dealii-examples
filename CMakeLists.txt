@@ -23,3 +23,11 @@ foreach(file ${files})
     ADD_EXECUTABLE(${app} ${file})
     DEAL_II_SETUP_TARGET(${app})
 endforeach()
+
+IF(EXISTS ${CMAKE_SOURCE_DIR}/tests/CMakeLists.txt)
+  SET(DEAL_II_HAVE_TESTS_DIRECTORY TRUE)
+ENDIF()
+
+enable_testing()
+
+DEAL_II_PICKUP_TESTS("tests")

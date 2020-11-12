@@ -1,0 +1,28 @@
+name: GitHub CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: setup
+      run: |
+         command="git clone https://github.com/${{ github.repository }} && \
+                  cd dealii-examples && git fetch origin ${{ github.ref }} && \
+                  git checkout FETCH_HEAD && \
+                  mkdir build && \ 
+                  cd build && \
+                  cmake .. && \
+                  make -j2 && \
+                  ctest -V";
+         
+         docker pull dealii/dealii:v9.2.0-focal
+         docker run -t dealii/dealii:v9.2.0-focal /bin/sh -c "$command";
