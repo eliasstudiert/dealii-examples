@@ -23,4 +23,4 @@ make -j3
 ctest -j3
 ```
 
-![GitHub CI](https://github.com/peterrum/dealii-examples/workflows/GitHub%20CI/badge.svg)
+<img align="right" src="https://github.com/peterrum/dealii-examples/workflows/GitHub%20CI/badge.svg">
