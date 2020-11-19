@@ -1,6 +1,9 @@
 # Basic deal.II examples
 
-This repository presents some basic features of the deal.II finite-element
+This repository accompanies the presentation "The general-purpose 
+finite-element library deal.II - Overview and basic 
+concepts" [[slides]](presentation.pdf) given by me 12.11.2020 in Munich and
+presents some basic features of the deal.II finite-element
 library:
 
 - *elasticity*: solves a simple elasticity problem
